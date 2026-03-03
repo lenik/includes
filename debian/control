@@ -1,0 +1,16 @@
+Source: includes
+Section: devel
+Priority: optional
+Maintainer: Lenik <includes@bodz.net>
+Build-Depends: debhelper-compat (= 13), meson, ninja-build
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: includes
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: resolve #include directives from C/C++ sources
+ includes recursively parses C/C++ source files, resolves
+ #include directives, evaluates conditionals, and outputs
+ the list of included filenames. Suitable for Makefile
+ integration and build dependency tracking.

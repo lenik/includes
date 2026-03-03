@@ -1,0 +1,156 @@
+.TH INCLUDES 1 "March 2026" "includes"
+.SH NAME
+includes \- resolve C/C++ #include dependencies
+
+.SH SYNOPSIS
+.B includes
+[\fIOPTIONS\fR] \fISOURCES...\fR
+
+.SH DESCRIPTION
+.B includes
+parses C/C++ source files, evaluates preprocessor conditionals, resolves
+.BR #include
+directives, and prints the set of headers or mapped source files they depend on.
+
+It understands \fB#if\fR, \fB#ifdef\fR, \fB#ifndef\fR, \fB#elif\fR, \fB#else\fR and
+\fB#endif\fR, evaluates expressions (including \fBdefined(X)\fR), and follows
+typical compiler search rules for quoted vs angled includes.
+
+By default, it prints a (possibly deduplicated) list of include paths, one per
+line.
+
+.SH OPTIONS
+.TP
+.BI "-I " PATH
+Add an include search path.
+
+.TP
+.BI "-T " TOOLKIT
+Select compiler toolkit; currently \fBgcc\fR and \fBmsc\fR are recognized.
+
+.TP
+.BI "-t " TRIPLET
+Target triplet (for example \fBx86_64-linux-gnu\fR).  If omitted, the toolkit
+tries to auto-detect a sensible default.
+
+.TP
+.BI "-L " NUM
+Maximum include recursion depth.  \fB0\fR means only the root source file is
+parsed; \fB-1\fR (the default) means unlimited depth.
+
+.TP
+.B "-d"
+Allow duplicate includes in the output.  By default, each resolved path is
+printed at most once.
+
+.TP
+.B "-u"
+Only output quoted includes (\fB"file"\fR).
+
+.TP
+.B "-a"
+Only output angled includes (\fB<file>\fR).
+
+.TP
+.B "-A"
+Recurse into angled includes as well as quoted ones.  By default, only quoted
+includes are recursively followed.
+
+.TP
+.B "-p"
+Preserve quotes in the output.  Without \fB-p\fR, paths are printed without
+surrounding \fB"\"\fR or \fB<>\fR.  With \fB-p\fR, quoted and angled includes are
+printed as they appeared in the source.
+
+.TP
+.B "-c"
+Header-to-source mapping mode.  Instead of printing headers, \fBincludes\fR
+tries to map each header to a corresponding C/C++ source file in the same
+tree (for example \fBfoo.h\fR \-> \fBfoo.c\fR / \fBfoo.cpp\fR) and prints those
+sources.
+
+In this mode:
+.RS
+.IP \[bu] 2
+Only headers that can be mapped to existing source files are output; missing
+or unmapped headers (including standard C++ headers without extensions) are
+ignored.
+.IP \[bu]
+The current root source file is suppressed by default; see \fB-e\fR to change
+this.
+.IP \[bu]
+The \fB-n\fR and \fB-m\fR switches are ignored.
+.RE
+
+.TP
+.B "-e"
+With \fB-c\fR, also echo source files that appear on the command line.  This
+causes the root translation units themselves to be included in the mapped
+source list instead of being suppressed.
+
+.TP
+.B "-n"
+Only output existing (resolved) include paths.  Missing includes are not
+printed.  Ignored in \fB-c\fR mode.
+
+.TP
+.B "-m"
+Only output missing (unresolved) include names.  Ignored in \fB-c\fR mode.
+
+.TP
+.B "-f"
+Canonicalize output paths using \fBrealpath(3)\fR, producing absolute,
+normalized paths.
+
+.TP
+.B "-s"
+Sort output lines.
+
+.TP
+.B "-j"
+Emit JSON output: a single array of string paths is printed to stdout.
+
+.TP
+.B "-g"
+Emit a Graphviz \fB.dot\fR include graph, with one directed edge per include.
+
+.TP
+.B "-P"
+Process multiple root sources in parallel (one thread per source).
+
+.TP
+.B "-w"
+Enable parser warnings.  When set, unmatched or missing \fB#endif\fR directives
+and unresolved includes are reported as warnings on stderr.  Without \fB-w\fR,
+these conditions still affect the exit status (parse errors) and output
+filtering, but extra warning messages are suppressed.
+
+.TP
+.B "-q"
+Decrease log verbosity (only errors at the lowest level).
+
+.TP
+.B "-v"
+Increase log verbosity (up to very verbose debug output).
+
+.TP
+.B "--help"
+Show a short usage summary and exit.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success; all sources parsed without preprocessor errors.
+.TP
+.B 1
+Parse error (for example, unmatched or missing \fB#endif\fR).
+.TP
+.B 2
+File or usage error (for example, missing sources, invalid options).
+.TP
+.B 3
+Internal error (allocation failure, toolkit failure, etc.).
+
+.SH SEE ALSO
+.BR cpp (1),
+.BR gcc (1)

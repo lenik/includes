@@ -1,0 +1,33 @@
+# Debian
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/includes/
+debian/*.log
+debian/*.substvars
+
+# Perl
+*.pmc
+*.bs
+blib/
+pm_to_blib
+*.pod
+.cover_db/
+
+# Test
+t/*.bak
+t/tmp*
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+Build
+Build.bat
