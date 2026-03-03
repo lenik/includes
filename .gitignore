@@ -31,3 +31,5 @@ Thumbs.db
 # Build
 Build
 Build.bat
+
+/.cache

@@ -10,6 +10,69 @@ static int strcmp_ptr(const void *a, const void *b) {
 }
 
 #define GROW 32
+#define PATH_SEG_MAX 256
+
+/** Normalize path: resolve . and .. segments. Caller must free result. */
+static char *path_normalize(const char *path) {
+	size_t seg_len[PATH_SEG_MAX];
+	const char *seg_ptr[PATH_SEG_MAX];
+	int n = 0;
+	const char *p = path;
+
+	if (!path) return NULL;
+	while (*p) {
+		while (*p == '/') p++;
+		if (!*p) break;
+		const char *start = p;
+		while (*p && *p != '/') p++;
+		size_t len = (size_t)(p - start);
+		if (len == 1 && start[0] == '.')
+			continue;
+		if (len == 2 && start[0] == '.' && start[1] == '.') {
+			if (n > 0)
+				n--;
+			else if (n < PATH_SEG_MAX) {
+				seg_ptr[n] = start;
+				seg_len[n] = 2;
+				n++;
+			}
+			continue;
+		}
+		if (n < PATH_SEG_MAX) {
+			seg_ptr[n] = start;
+			seg_len[n] = len;
+			n++;
+		}
+	}
+	size_t total = 0;
+	for (int i = 0; i < n; i++)
+		total += seg_len[i] + (i > 0 ? 1 : 0);
+	char *out = (char *)malloc(total + 1);
+	if (!out) return NULL;
+	char *q = out;
+	for (int i = 0; i < n; i++) {
+		if (i) *q++ = '/';
+		memcpy(q, seg_ptr[i], seg_len[i]);
+		q += seg_len[i];
+	}
+	*q = '\0';
+	return out;
+}
+
+/** Join base_dir and path then normalize (e.g. "io" + "../net/URI.cpp" -> "net/URI.cpp"). Caller must free result. */
+static char *path_join_and_normalize(const char *base_dir, const char *path) {
+	if (!base_dir || !*base_dir) return path_normalize(path);
+	if (!path || !*path) return path_normalize(base_dir);
+	size_t bl = strlen(base_dir), pl = strlen(path);
+	char *combined = (char *)malloc(bl + 1 + pl + 1);
+	if (!combined) return NULL;
+	memcpy(combined, base_dir, bl);
+	combined[bl] = '/';
+	memcpy(combined + bl + 1, path, pl + 1);
+	char *norm = path_normalize(combined);
+	free(combined);
+	return norm;
+}
 
 static int push_list(char ***list, size_t *count, size_t *cap, const char *path);
 
@@ -186,6 +249,17 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 		} else {
 			/* With -c and no corresponding source file, suppress output for this include. */
 			have_mapped_source = false;
+		}
+	}
+	/* In non-canonicalize mode, resolve relative display paths (e.g. ../net/URI.cpp)
+	 * against root_dir so that "io/../net/URI.cpp" becomes "net/URI.cpp". */
+	if (!c->config->canonicalize && c->root_dir && c->root_dir[0] && display &&
+	    display[0] == '.') {
+		char *norm = path_join_and_normalize(c->root_dir, display);
+		if (norm) {
+			if (display_alloc) free(display_alloc);
+			display_alloc = norm;
+			display = norm;
 		}
 	}
 	/* With -c, only output existing C/C++ sources; without -c, output headers as usual.
