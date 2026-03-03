@@ -68,6 +68,58 @@ Produce JSON output suitable for tooling:
 includes -j src/main.c
 ```
 
+Multi-file demo: how includes spread
+------------------------------------
+
+Suppose you have a small app:
+
+```text
+src/
+  main.c        // #include "app.h"
+  app.c         // #include "app.h", "util.h"
+  app.h         // #include <stdio.h>
+  util.c        // #include "util.h"
+  util.h        // #include <stdlib.h>
+```
+
+To see how `#include` directives across these sources expand into a single set of dependencies:
+
+```sh
+includes src/main.c src/app.c src/util.c
+```
+
+Possible output:
+
+```text
+app.h
+util.h
+stdio.h
+stdlib.h
+```
+
+If you instead want to know which **source** files must be built (header→source mapping), use:
+
+```sh
+includes -c -e src/main.c
+```
+
+which could yield:
+
+```text
+src/main.c
+src/app.c
+src/util.c
+```
+
+The list you can used in Makefile rules, explicit or implicit.
+
+```Makefile
+%.bin: %.c
+  cc -o $@ `includes -c $^`
+```
+
+This demonstrates how `includes` follows the `#include` graph across multiple translation units and reports the combined dependencies.
+
 Library usage
 -------------
 
