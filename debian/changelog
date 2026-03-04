@@ -1,3 +1,12 @@
+includes (0.0.4) testing; urgency=medium
+
+  * -c mode: parse header files in addition to mapped sources to discover
+    transitive includes (fixes missing includes that are only in headers).
+  * -c -e: include root source files from command line in output.
+  * -c without -e: exclude root sources even if referenced as includes later.
+
+ -- Lenik (谢继雷) <lenik@bodz.net>  Wed, 05 Mar 2026 00:53:00 +0800
+
 includes (0.0.3) testing; urgency=medium
 
   * Add -C/--chdir: change to directory before processing (like make -C).

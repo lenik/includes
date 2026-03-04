@@ -17,6 +17,9 @@ typedef struct include_collect {
 	char **printed;      /* paths we've already output (for dedup) */
 	size_t printed_count;
 	size_t printed_cap;
+	char **root_sources; /* root source files from command line (for -c -e) */
+	size_t root_count;
+	size_t root_cap;
 	char *root_dir;      /* directory of first root source (for -c join names) */
 	int depth;
 	const char *current_path;  /* file being parsed (for resolve) */

@@ -313,6 +313,28 @@ recurse_only:
 		}
 		c->depth--;
 	}
+	/* In -c mode, also parse the header itself (if it differs from the source) to discover
+	 * includes that are in the header but not in the source. This ensures we find transitive
+	 * includes through header files and map them to their corresponding sources. */
+	if (c->config->header_to_source && source_path && resolved && strcmp(resolved, source_path) != 0) {
+		const file_content_t *header_content = file_read(resolved);
+		if (header_content) {
+			bool header_in_visited = in_list(c->visited, c->visited_count, canonical);
+			if (!header_in_visited) {
+				push_list(&c->visited, &c->visited_count, &c->visited_cap, canonical);
+				logdebug_fmt("Parsing %s", resolved);
+				c->depth++;
+				{
+					const char *prev = c->current_path;
+					c->current_path = resolved;
+					if (!pp_parse(header_content->data, header_content->len, c->current_path, c->config, c->macros, include_cb, c, NULL))
+						c->parse_error = 1;
+					c->current_path = prev;
+				}
+				c->depth--;
+			}
+		}
+	}
 	free(resolved);
 	if (canonical != resolved) free(canonical);
 	if (source_path) free(source_path);
@@ -323,6 +345,24 @@ void include_collect_init(include_collect_t *c, const includes_config_t *config,
 	memset(c, 0, sizeof(*c));
 	c->config = config;
 	c->macros = macros;
+}
+
+static void collect_root_source(include_collect_t *c, const char *path) {
+	char *path_copy;
+
+	if (!c->config->header_to_source) return;
+	if (push_list(&c->root_sources, &c->root_count, &c->root_cap, path) != 0) return;
+	
+	/* In -c mode without -e, add root sources to printed list to suppress them
+	 * if they're encountered as includes later. */
+	if (!c->config->echo_sources) {
+		path_copy = strdup(path);
+		if (path_copy)
+			push_list(&c->printed, &c->printed_count, &c->printed_cap, path_copy);
+	} else {
+		/* With -e, output the root source immediately */
+		output_include(c, path, false);
+	}
 }
 
 void include_collect_set_output_cb(include_collect_t *c, void (*cb)(void *ctx, const char *path), void *ctx) {
@@ -395,8 +435,11 @@ void include_collect_finish(include_collect_t *c) {
 	free(c->visited);
 	for (i = 0; i < c->printed_count; i++) free(c->printed[i]);
 	free(c->printed);
+	for (i = 0; i < c->root_count; i++) free(c->root_sources[i]);
+	free(c->root_sources);
 	c->visited = NULL; c->visited_count = c->visited_cap = 0;
 	c->printed = NULL; c->printed_count = c->printed_cap = 0;
+	c->root_sources = NULL; c->root_count = c->root_cap = 0;
 	free(c->root_dir);
 	c->root_dir = NULL;
 }
@@ -408,6 +451,9 @@ bool include_collect_file(include_collect_t *c, const char *path) {
 	path_norm = path_normalize(path);
 	if (!path_norm) path_norm = strdup(path);
 	if (!path_norm) return false;
+
+	/* Track root source files for -c -e mode */
+	collect_root_source(c, path_norm);
 
 	logdebug_fmt("Parsing %s", path_norm);
 	content = file_read(path_norm);
