@@ -46,10 +46,10 @@ const file_content_t *file_read(const char *path);
 void file_loader_add_system_paths(const char **paths, size_t count);
 
 /**
- * If path is a header, look in the same directory for a corresponding source
- * file (.c, .cc, .cpp, .cxx in that order). Returns allocated path or NULL.
- * Caller frees.
+ * If path is a header, look for a corresponding source file (.c, .cc, .cpp, .cxx).
+ * Search order: header's directory, then (if non-NULL) including_path's directory.
+ * Returns allocated path or NULL. Caller frees.
  */
-char *file_header_to_source(const char *header_path);
+char *file_header_to_source(const char *header_path, const char *including_path);
 
 #endif /* INCLUDES_FILE_LOADER_H */

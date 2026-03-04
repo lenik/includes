@@ -12,14 +12,16 @@ static int strcmp_ptr(const void *a, const void *b) {
 #define GROW 32
 #define PATH_SEG_MAX 256
 
-/** Normalize path: resolve . and .. segments. Caller must free result. */
+/** Normalize path: resolve . and .. segments. Preserves absolute (leading /). Caller must free result. */
 static char *path_normalize(const char *path) {
 	size_t seg_len[PATH_SEG_MAX];
 	const char *seg_ptr[PATH_SEG_MAX];
 	int n = 0;
 	const char *p = path;
+	int absolute = (path && path[0] == '/');
 
 	if (!path) return NULL;
+	if (absolute) p++;
 	while (*p) {
 		while (*p == '/') p++;
 		if (!*p) break;
@@ -44,12 +46,13 @@ static char *path_normalize(const char *path) {
 			n++;
 		}
 	}
-	size_t total = 0;
+	size_t total = absolute ? 1 : 0;
 	for (int i = 0; i < n; i++)
 		total += seg_len[i] + (i > 0 ? 1 : 0);
 	char *out = (char *)malloc(total + 1);
 	if (!out) return NULL;
 	char *q = out;
+	if (absolute) *q++ = '/';
 	for (int i = 0; i < n; i++) {
 		if (i) *q++ = '/';
 		memcpy(q, seg_ptr[i], seg_len[i]);
@@ -125,6 +128,7 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 	char *canonical;
 	char *source_path = NULL;
 	char *display_alloc = NULL;
+	char *canon_visit_alloc = NULL; /* for -c: canonical of source we recurse into (to free at end) */
 	const char *display;
 	int max_depth = c->config->max_depth;
 	bool recurse_quoted = true;
@@ -145,7 +149,8 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 		}
 		return;
 	}
-	canonical = file_canonical_path(resolved);
+	/* Use path as given (no symlink resolution) for visited and display. */
+	canonical = strdup(resolved);
 	if (!canonical) canonical = resolved;
 	/* With -m we only output missing; -n/-m ignored when -c (output existing sources always). */
 	if (c->config->missing_only && !c->config->header_to_source)
@@ -173,7 +178,7 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 	 * '.' or '/'). This makes a root like "./src/pp_parse.c" and include
 	 * "pp_lexer.h" yield "./src/pp_lexer.h". */
 	if (c->config->canonicalize) {
-		display = canonical;
+		display = canonical; /* -f: use path as we have it (no realpath) */
 	} else {
 		display = include_name;
 		if (c->root_dir && c->root_dir[0] &&
@@ -192,60 +197,31 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 	}
 
 	if (c->config->header_to_source) {
-		source_path = file_header_to_source(resolved);
+		source_path = file_header_to_source(resolved, c->current_path);
 		if (source_path) {
+			/* In -c mode, always base display on the actual mapped source
+			 * path, not on the include name. This avoids mislabeling
+			 * sources when headers come from other directories (e.g.
+			 * mapping demo/net/URI.hpp to demo/io/URI.cpp). */
 			if (c->config->canonicalize) {
-				/* -f: absolute canonical source path. */
+				/* -f: absolute source path (already normalized). */
 				display = source_path;
 			} else {
-				/* Build a relative source path directly from the include name:
-				 *   "foo/bar.h"     -> "foo/bar.c"
-				 *   "./foo/bar.hxx" -> "./foo/bar.cpp"
-				 * using the extension chosen by file_header_to_source(). */
-				const char *src_ext = strrchr(source_path, '.');
-				const char *ext = src_ext ? src_ext : "";
-				size_t name_len = strlen(include_name);
-				const char *slash = strrchr(include_name, '/');
-				const char *base = slash ? slash + 1 : include_name;
-				const char *dot = strrchr(base, '.');
-				size_t stem_len = dot ? (size_t)(dot - include_name) : name_len;
-				const char *rel = include_name;
-
-				/* For join-names: if we have a root_dir and the relative path does not
-				 * start with '.' or '/', prepend root_dir + '/'. This makes:
-				 *   root: "src/pp_parse.c", include "pp_lexer.h" -> "src/pp_lexer.c"
-				 * while keeping "./foo/bar.c" unchanged. */
-				if (c->root_dir && c->root_dir[0] &&
-				    include_name[0] != '.' && include_name[0] != '/') {
-					size_t root_len = strlen(c->root_dir);
-					size_t total = root_len + 1 + stem_len + strlen(ext) + 1;
-					display_alloc = (char *)malloc(total);
-					if (display_alloc) {
-						memcpy(display_alloc, c->root_dir, root_len);
-						display_alloc[root_len] = '/';
-						memcpy(display_alloc + root_len + 1, include_name, stem_len);
-						strcpy(display_alloc + root_len + 1 + stem_len, ext);
-						display = display_alloc;
-					}
-				} else {
-					display_alloc = (char *)malloc(stem_len + strlen(ext) + 1);
-					if (display_alloc) {
-						memcpy(display_alloc, rel, stem_len);
-						strcpy(display_alloc + stem_len, ext);
-						display = display_alloc;
-					}
+				if (display_alloc) {
+					free(display_alloc);
+					display_alloc = NULL;
 				}
+				display_alloc = strdup(source_path);
+				if (display_alloc)
+					display = display_alloc;
+				else
+					display = source_path;
 			}
 
 			/* By default, do not echo the current root source file when -c is used. */
-			if (!c->config->echo_sources && c->current_path) {
-				char *canon_out = file_canonical_path(source_path);
-				char *canon_cur = file_canonical_path(c->current_path);
-				if (canon_out && canon_cur && strcmp(canon_out, canon_cur) == 0)
-					is_root_source = true;
-				free(canon_out);
-				free(canon_cur);
-			}
+			if (!c->config->echo_sources && c->current_path &&
+			    source_path && strcmp(source_path, c->current_path) == 0)
+				is_root_source = true;
 		} else {
 			/* With -c and no corresponding source file, suppress output for this include. */
 			have_mapped_source = false;
@@ -300,22 +276,37 @@ static void include_cb(void *ctx, const char *include_name, bool is_angled) {
 	if (!c->config->graphviz_output &&
 	    (!c->config->header_to_source || (have_mapped_source && !is_root_source)))
 		output_include(c, display, is_angled);
-	if (source_path) free(source_path);
 	if (display_alloc) free(display_alloc);
 
 recurse_only:
 
 	{
 		bool do_recurse = (is_angled && recurse_angled) || (!is_angled && recurse_quoted);
-		content = do_recurse ? file_read(resolved) : NULL;
+		/* In -c mode, recurse into the mapped source file so we discover its includes
+		 * and map those to sources too (transitive closure for compile automation). */
+		const char *file_to_read = (c->config->header_to_source && source_path) ? source_path : resolved;
+		const char *canon_visit = canonical;
+
+		if (c->config->header_to_source && source_path) {
+			canon_visit_alloc = strdup(source_path);
+			if (canon_visit_alloc) canon_visit = canon_visit_alloc;
+		}
+		if (do_recurse && canon_visit && !in_list(c->visited, c->visited_count, canon_visit)) {
+			content = file_read(file_to_read);
+			if (content) {
+				push_list(&c->visited, &c->visited_count, &c->visited_cap, canon_visit);
+			}
+		} else {
+			content = NULL;
+		}
 	}
 	if (content) {
-		logdebug_fmt("Parsing %s", resolved);
-		push_list(&c->visited, &c->visited_count, &c->visited_cap, canonical);
+		logdebug_fmt("Parsing %s", (c->config->header_to_source && source_path) ? source_path : resolved);
 		c->depth++;
 		{
 			const char *prev = c->current_path;
-			c->current_path = resolved;
+			const char *file_to_read = (c->config->header_to_source && source_path) ? source_path : resolved;
+			c->current_path = file_to_read;
 			if (!pp_parse(content->data, content->len, c->current_path, c->config, c->macros, include_cb, c, NULL))
 				c->parse_error = 1;
 			c->current_path = prev;
@@ -324,6 +315,8 @@ recurse_only:
 	}
 	free(resolved);
 	if (canonical != resolved) free(canonical);
+	if (source_path) free(source_path);
+	if (canon_visit_alloc) free(canon_visit_alloc);
 }
 
 void include_collect_init(include_collect_t *c, const includes_config_t *config, macro_table_t *macros) {
@@ -410,38 +403,41 @@ void include_collect_finish(include_collect_t *c) {
 
 bool include_collect_file(include_collect_t *c, const char *path) {
 	const file_content_t *content;
-	char *canonical;
-	logdebug_fmt("Parsing %s", path);
-	content = file_read(path);
-	if (!content) return false;
-	canonical = file_canonical_path(path);
-	if (canonical) {
-		if (in_list(c->visited, c->visited_count, canonical)) {
-			free(canonical);
-			return true;
-		}
-		push_list(&c->visited, &c->visited_count, &c->visited_cap, canonical);
-		free(canonical);
+	char *path_norm;
+
+	path_norm = path_normalize(path);
+	if (!path_norm) path_norm = strdup(path);
+	if (!path_norm) return false;
+
+	logdebug_fmt("Parsing %s", path_norm);
+	content = file_read(path_norm);
+	if (!content) { free(path_norm); return false; }
+	if (in_list(c->visited, c->visited_count, path_norm)) {
+		free(path_norm);
+		return true;
 	}
+	push_list(&c->visited, &c->visited_count, &c->visited_cap, path_norm);
 	/* Record root directory for -c join-name logic (first call only). */
 	if (!c->root_dir) {
-		const char *slash = strrchr(path, '/');
+		const char *slash = strrchr(path_norm, '/');
 		if (slash) {
-			size_t len = (size_t)(slash - path);
+			size_t len = (size_t)(slash - path_norm);
 			c->root_dir = (char *)malloc(len + 1);
 			if (c->root_dir) {
-				memcpy(c->root_dir, path, len);
+				memcpy(c->root_dir, path_norm, len);
 				c->root_dir[len] = '\0';
 			}
 		}
 	}
 	c->depth = 0;
-	c->current_path = path;
-	if (!pp_parse(content->data, content->len, path, c->config, c->macros, include_cb, c, NULL)) {
+	c->current_path = path_norm;
+	if (!pp_parse(content->data, content->len, path_norm, c->config, c->macros, include_cb, c, NULL)) {
 		c->parse_error = 1;
 		c->current_path = NULL;
+		free(path_norm);
 		return false;
 	}
 	c->current_path = NULL;
+	free(path_norm);
 	return true;
 }

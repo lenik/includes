@@ -1,4 +1,22 @@
-includes (0.0.2) UNRELEASED; urgency=medium
+includes (0.0.3) testing; urgency=medium
+
+  * Add -C/--chdir: change to directory before processing (like make -C).
+  * -c mode: recurse into mapped source files (transitive closure for compile
+    automation); missing or unmapped headers are ignored.
+  * Add -w: enable parser warnings (missing #endif, include not found);
+    warnings suppressed by default.
+  * Parser: only lex/parse preprocessor directive lines; ignore non-macro body.
+  * Lexer: lone '=' no longer tokenized as EOF (fixes a.h with "=" line).
+  * Paths: no symlink resolution; normalize . and ..; preserve absolute paths.
+  * file_header_to_source: try including file's directory only when it differs
+    from header's (avoid picking same-named source from wrong module).
+  * -c display: use actual source path for output, not include name + root_dir.
+  * Fix use-after-free of source_path in include_cb (free after recurse_only).
+  * Fix -e option description in usage and docs.
+
+ -- Lenik (谢继雷) <lenik@bodz.net>  Tue, 03 Mar 2026 22:35:22 +0800
+
+includes (0.0.2) testing; urgency=medium
 
   * Fixed path join with ../
 

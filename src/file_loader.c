@@ -16,12 +16,63 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+#define PATH_SEG_MAX 256
+
+/** Normalize path: resolve . and .., collapse slashes. No symlink resolution. Preserves absolute (leading /). Caller frees result. */
+static char *path_normalize(const char *path) {
+	size_t seg_len[PATH_SEG_MAX];
+	const char *seg_ptr[PATH_SEG_MAX];
+	int n = 0;
+	const char *p = path;
+	int absolute = (path && path[0] == '/');
+
+	if (!path) return NULL;
+	if (absolute) p++;
+	while (*p) {
+		while (*p == '/') p++;
+		if (!*p) break;
+		const char *start = p;
+		while (*p && *p != '/') p++;
+		size_t len = (size_t)(p - start);
+		if (len == 1 && start[0] == '.')
+			continue;
+		if (len == 2 && start[0] == '.' && start[1] == '.') {
+			if (n > 0)
+				n--;
+			else if (n < PATH_SEG_MAX) {
+				seg_ptr[n] = start;
+				seg_len[n] = 2;
+				n++;
+			}
+			continue;
+		}
+		if (n < PATH_SEG_MAX) {
+			seg_ptr[n] = start;
+			seg_len[n] = len;
+			n++;
+		}
+	}
+	size_t total = absolute ? 1 : 0;
+	for (int i = 0; i < n; i++)
+		total += seg_len[i] + (i > 0 ? 1 : 0);
+	char *out = (char *)malloc(total + 1);
+	if (!out) return NULL;
+	char *q = out;
+	if (absolute) *q++ = '/';
+	for (int i = 0; i < n; i++) {
+		if (i) *q++ = '/';
+		memcpy(q, seg_ptr[i], seg_len[i]);
+		q += seg_len[i];
+	}
+	*q = '\0';
+	return out;
+}
 
 static const includes_config_t *loader_config;
 static char **system_include_paths;
 static size_t system_include_paths_count;
 
-/* Simple cache: array of (canonical_path, content). Grows on demand. */
+/* Simple cache: array of (path_key, content). Key is path as given (no symlink resolution). Grows on demand. */
 #define CACHE_INIT 32
 static struct cache_entry {
 	char *path;
@@ -39,16 +90,16 @@ static void cache_free_entry(struct cache_entry *e) {
 	e->content.len = 0;
 }
 
-static const file_content_t *cache_get(const char *canonical) {
+static const file_content_t *cache_get(const char *path_key) {
 	size_t i;
 	for (i = 0; i < file_cache_count; i++) {
-		if (strcmp(file_cache[i].path, canonical) == 0)
+		if (strcmp(file_cache[i].path, path_key) == 0)
 			return &file_cache[i].content;
 	}
 	return NULL;
 }
 
-static bool cache_put(const char *canonical, char *data, size_t len) {
+static bool cache_put(const char *path_key, char *data, size_t len) {
 	if (file_cache_count >= file_cache_cap) {
 		size_t new_cap = file_cache_cap ? file_cache_cap * 2 : CACHE_INIT;
 		struct cache_entry *n = (struct cache_entry *)realloc(file_cache, new_cap * sizeof(*file_cache));
@@ -56,7 +107,7 @@ static bool cache_put(const char *canonical, char *data, size_t len) {
 		file_cache = n;
 		file_cache_cap = new_cap;
 	}
-	file_cache[file_cache_count].path = strdup(canonical);
+	file_cache[file_cache_count].path = strdup(path_key);
 	file_cache[file_cache_count].content.data = data;
 	file_cache[file_cache_count].content.len = len;
 	if (!file_cache[file_cache_count].path) {
@@ -135,12 +186,12 @@ char *file_resolve_include(const char *including_path, const char *include_name,
 
 	including_dir = dir_of(including_path);
 
-	/* Quoted: 1) directory of including file, 2) -I, 3) system */
+	/* Quoted: 1) directory of including file, 2) -I, 3) system. Return path normalized (no symlink resolution). */
 	if (!is_angled && including_dir) {
 		if (try_path(including_dir, include_name, try, sizeof(try))) {
-			resolved = file_canonical_path(try);
+			resolved = path_normalize(try);
 			free(including_dir);
-			return resolved;
+			return resolved ? resolved : strdup(try);
 		}
 	}
 
@@ -149,9 +200,9 @@ char *file_resolve_include(const char *including_path, const char *include_name,
 		for (i = 0; i < loader_config->include_paths_count; i++) {
 			const char *d = loader_config->include_paths[i];
 			if (try_path(d, include_name, try, sizeof(try))) {
-				resolved = file_canonical_path(try);
+				resolved = path_normalize(try);
 				free(including_dir);
-				return resolved;
+				return resolved ? resolved : strdup(try);
 			}
 		}
 	}
@@ -160,9 +211,9 @@ char *file_resolve_include(const char *including_path, const char *include_name,
 	for (i = 0; i < system_include_paths_count; i++) {
 		if (!system_include_paths[i]) continue;
 		if (try_path(system_include_paths[i], include_name, try, sizeof(try))) {
-			resolved = file_canonical_path(try);
+			resolved = path_normalize(try);
 			free(including_dir);
-			return resolved;
+			return resolved ? resolved : strdup(try);
 		}
 	}
 
@@ -171,7 +222,7 @@ char *file_resolve_include(const char *including_path, const char *include_name,
 }
 
 const file_content_t *file_read(const char *path) {
-	char *canonical;
+	char *path_key;
 	FILE *f;
 	size_t cap, n;
 	char *data;
@@ -179,30 +230,31 @@ const file_content_t *file_read(const char *path) {
 	const file_content_t *r = NULL;
 
 	pthread_mutex_lock(&file_cache_mutex);
-	canonical = file_canonical_path(path);
-	if (!canonical) goto done;
+	path_key = path_normalize(path);
+	if (!path_key) path_key = strdup(path);
+	if (!path_key) goto done;
 
-	if (cache_get(canonical)) {
-		r = cache_get(canonical);
-		free(canonical);
+	if (cache_get(path_key)) {
+		r = cache_get(path_key);
+		free(path_key);
 		goto done;
 	}
 
-	f = fopen(path, "rb");
+	f = fopen(path_key, "rb");
 	if (!f) {
 		logdebug_fmt("Cannot open file: %s", path);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
 	if (fseek(f, 0, SEEK_END) != 0) {
 		fclose(f);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
 	pos = ftell(f);
 	if (pos < 0) {
 		fclose(f);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
 	rewind(f);
@@ -211,33 +263,33 @@ const file_content_t *file_read(const char *path) {
 		data = (char *)malloc(1);
 		if (data) data[0] = '\0';
 		fclose(f);
-		if (!data) { free(canonical); goto done; }
-		cache_put(canonical, data, 0);
-		r = cache_get(canonical);
-		free(canonical);
+		if (!data) { free(path_key); goto done; }
+		cache_put(path_key, data, 0);
+		r = cache_get(path_key);
+		free(path_key);
 		goto done;
 	}
 	data = (char *)malloc(cap + 1);
 	if (!data) {
 		fclose(f);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
 	n = fread(data, 1, cap, f);
 	fclose(f);
 	if (n != cap) {
 		free(data);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
 	data[cap] = '\0';
-	if (!cache_put(canonical, data, cap)) {
+	if (!cache_put(path_key, data, cap)) {
 		free(data);
-		free(canonical);
+		free(path_key);
 		goto done;
 	}
-	r = cache_get(canonical);
-	free(canonical);
+	r = cache_get(path_key);
+	free(path_key);
 done:
 	pthread_mutex_unlock(&file_cache_mutex);
 	return r;
@@ -259,25 +311,41 @@ static char *basename_no_ext(const char *path) {
 	return strndup(base, (size_t)(dot - base));
 }
 
-char *file_header_to_source(const char *header_path) {
-	char *dir = NULL, *base = NULL, *out = NULL;
+static char *try_dir_for_source(const char *dir, const char *base) {
 	char try[PATH_MAX];
 	static const char *exts[] = { ".c", ".cc", ".cpp", ".cxx" };
 	size_t i;
 
-	if (!header_path || !is_header_ext(header_path)) return NULL;
-	dir = dir_of(header_path);
-	base = basename_no_ext(header_path);
-	if (!dir || !base) goto done;
+	if (!dir || !base) return NULL;
 	for (i = 0; i < sizeof(exts)/sizeof(exts[0]); i++) {
 		int n = snprintf(try, sizeof(try), "%s/%s%s", dir, base, exts[i]);
 		if (n > 0 && (size_t)n < sizeof(try) && access(try, R_OK) == 0) {
-			out = file_canonical_path(try);
-			if (!out) out = strdup(try);
-			break;
+			char *out = path_normalize(try);
+			return out ? out : strdup(try);
 		}
 	}
-done:
+	return NULL;
+}
+
+char *file_header_to_source(const char *header_path, const char *including_path) {
+	char *dir = NULL, *inc_dir = NULL, *base = NULL, *out = NULL;
+
+	if (!header_path || !is_header_ext(header_path)) return NULL;
+	base = basename_no_ext(header_path);
+	if (!base) return NULL;
+	dir = dir_of(header_path);
+	if (!dir) { free(base); return NULL; }
+	out = try_dir_for_source(dir, base);
+	if (out) { free(dir); free(base); return out; }
+	/* Do not try including file's directory when it differs from header's, or we can
+	 * pick a same-named source from another module (e.g. demo/io/URI.cpp when header
+	 * is demo/net/URI.hpp). Only try when same (redundant) so we never use wrong dir. */
+	if (including_path && including_path[0]) {
+		inc_dir = dir_of(including_path);
+		if (inc_dir && strcmp(dir, inc_dir) == 0)
+			out = try_dir_for_source(inc_dir, base);
+		free(inc_dir);
+	}
 	free(dir);
 	free(base);
 	return out;

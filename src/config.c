@@ -48,6 +48,8 @@ void config_free(includes_config_t *c) {
 	c->include_paths_count = c->include_paths_cap = 0;
 	c->sources = NULL;
 	c->sources_count = c->sources_cap = 0;
+	free(c->chdir_path);
+	c->chdir_path = NULL;
 }
 
 void config_print_usage(void) {
@@ -64,7 +66,7 @@ void config_print_usage(void) {
 		"  -a            Output angled includes only\n"
 		"  -A            Recurse into angled includes\n"
 		"  -p            Preserve quotes in output (\"file\" / <file>)\n"
-		"  -c            Map headers to corresponding source files (suppress root sources by default)\n"
+		"  -c            Map headers to source files and recurse into them (for compile automation)\n"
 		"  -e            With -c, also echo source files listed on the command line\n"
 		"  -n            Only output existing (resolved) paths (ignored with -c)\n"
 		"  -m            Only output missing (unresolved) include names (ignored with -c)\n"
@@ -73,6 +75,7 @@ void config_print_usage(void) {
 		"  -j            JSON output (single array)\n"
 		"  -g            Graphviz .dot output (include graph)\n"
 		"  -P            Parallel (multiple sources in threads)\n"
+		"  -C DIR        Change to directory DIR before processing (like make -C)\n"
 		"  -w            Enable parser warnings (missing #endif, etc.)\n"
 		"  -q            Quiet (errors only)\n"
 		"  -v            Verbose\n"
@@ -87,12 +90,13 @@ int config_parse_options(includes_config_t *c, int argc, char **argv, int *first
 		{"exists", no_argument, 0, 'n'},
 		{"missing", no_argument, 0, 'm'},
 		{"canonicalize", no_argument, 0, 'f'},
+		{"chdir", required_argument, 0, 'C'},
 		{0, 0, 0, 0}
 	};
 	int opt;
 	const char *arg;
 
-	while ((opt = getopt_long(argc, argv, "I:T:t:L:duaApcenmfqsvjgPwh", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "I:T:t:L:C:duaApcenmfqsvjgPwh", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'I':
 			arg = optarg ? optarg : "";
@@ -151,6 +155,10 @@ int config_parse_options(includes_config_t *c, int argc, char **argv, int *first
 			break;
 		case 'w':
 			c->warnings = true;
+			break;
+		case 'C':
+			free(c->chdir_path);
+			c->chdir_path = optarg ? strdup(optarg) : NULL;
 			break;
 		case 'q':
 			c->verbosity_delta--;

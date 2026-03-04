@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #define PARALLEL_GROW 64
 
@@ -82,6 +83,14 @@ int main(int argc, char **argv) {
 		config_print_usage();
 		config_free(&config);
 		return 2;
+	}
+
+	if (config.chdir_path && config.chdir_path[0]) {
+		if (chdir(config.chdir_path) != 0) {
+			logwarn_fmt("Cannot chdir to %s", config.chdir_path);
+			config_free(&config);
+			return 2;
+		}
 	}
 
 	logdebug_fmt("Sources: %zu, -I count: %zu, depth: %d",

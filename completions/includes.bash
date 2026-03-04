@@ -6,7 +6,7 @@ _includes() {
 	prev="${COMP_WORDS[COMP_CWORD-1]:-}"
 
 	case "$prev" in
-		-I)
+		-I|-C)
 			compopt -o dirnames 2>/dev/null || true
 			COMPREPLY=($(compgen -d -S / -- "$cur"))
 			return 0
@@ -21,7 +21,7 @@ _includes() {
 			;;
 	esac
 	if [[ "$cur" == -* ]]; then
-		COMPREPLY=($(compgen -W "-I -T -t -L -d -u -a -A -p -c -e -n -m -s -j -g -P -q -v --help --echo --exists --missing" -- "$cur"))
+		COMPREPLY=($(compgen -W "-I -T -t -L -C -d -u -a -A -p -c -e -n -m -s -j -g -P -w -q -v --help --echo --exists --missing --chdir" -- "$cur"))
 		return 0
 	fi
 	compopt -o default 2>/dev/null || true

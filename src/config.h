@@ -59,6 +59,9 @@ typedef struct includes_config {
 	/* -P: parallel parsing (multiple root sources in threads) */
 	bool parallel;
 
+	/* -C: change to directory before processing (like make -C) */
+	char *chdir_path;
+
 	/* -w: enable parser warning messages (e.g. missing #endif) */
 	bool warnings;
 

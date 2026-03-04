@@ -9,6 +9,7 @@
 #include "util/logging.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 int includes_run(const includes_config_t *config, void (*cb)(void *ctx, const char *path), void *ctx) {
 	macro_table_t *macros;
@@ -18,7 +19,12 @@ int includes_run(const includes_config_t *config, void (*cb)(void *ctx, const ch
 	if (!config || config->sources_count == 0)
 		return 2;
 
-    set_loglevel(1 + config->verbosity_delta);
+	if (config->chdir_path && config->chdir_path[0]) {
+		if (chdir(config->chdir_path) != 0)
+			return 2;
+	}
+
+	set_loglevel(1 + config->verbosity_delta);
 
 	file_loader_init(config);
 	macros = macro_table_create();

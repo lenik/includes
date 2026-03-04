@@ -1,5 +1,5 @@
 project('includes', 'c',
-  version : '0.0.1',
+  version : '0.0.3',
   license : 'GPL',
   default_options : ['warning_level=2', 'c_std=c11'])
 thread_dep = dependency('threads')
